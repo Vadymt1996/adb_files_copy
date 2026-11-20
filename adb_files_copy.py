@@ -14,6 +14,7 @@ import ctypes
 from ctypes import wintypes
 
 from wifi_manager import WiFiManagerDialog, execute_adb_command
+from space_analyzer import SpaceAnalyzerDialog
 
 # Win32 Drag & Drop API константи та функції
 WM_DROPFILES = 0x0233
@@ -1151,6 +1152,17 @@ class ADBFileBrowserApp:
             padx=8
         ).pack(side="right", padx=(4, 8), pady=4)
 
+        self.btn_space_analyzer = tk.Button(
+            self.header_frame,
+            text="📊 Аналізатор пам'яті",
+            command=self.open_space_analyzer,
+            font=("Arial", 8, "bold"),
+            bg="#E1F5FE",
+            fg="#0277BD",
+            padx=8
+        )
+        self.btn_space_analyzer.pack(side="right", padx=4, pady=4)
+
         self.btn_wifi = tk.Button(
             self.header_frame,
             text="📶 Wi-Fi підключення",
@@ -1288,6 +1300,8 @@ class ADBFileBrowserApp:
         self.root.bind("<F8>", lambda e: self.confirm_delete_selected())
         self.root.bind("<Control-r>", lambda e: self.active_pane.refresh())
         self.root.bind("<Control-R>", lambda e: self.active_pane.refresh())
+        self.root.bind("<Control-i>", lambda e: self.open_space_analyzer())
+        self.root.bind("<Control-I>", lambda e: self.open_space_analyzer())
 
     def _on_tab_key(self, event):
         target = self.right_pane if self.active_pane == self.left_pane else self.left_pane
@@ -1452,6 +1466,27 @@ class ADBFileBrowserApp:
         if messagebox.askyesno("Відключення Wi-Fi", "Відключити активне бездротове з'єднання ADB?"):
             self.execute_adb(["disconnect"])
             self.manual_device_check()
+
+    def open_space_analyzer(self):
+        if not self.current_device_id:
+            messagebox.showwarning("Пристрій не підключено", "Під'єднайте телефон через USB або Wi-Fi для аналізу пам'яті!")
+            return
+        SpaceAnalyzerDialog(self.root, self)
+
+    def navigate_phone_pane(self, target_path):
+        """Перехід у вказану папку на телефоні у активній або першій доступній телефонній панелі"""
+        pane = None
+        if self.active_pane.mode == "phone":
+            pane = self.active_pane
+        elif self.left_pane.mode == "phone":
+            pane = self.left_pane
+        elif self.right_pane.mode == "phone":
+            pane = self.right_pane
+
+        if pane:
+            self.set_active_pane(pane)
+            pane.navigate_to(target_path)
+            self.root.lift()
 
     # --- Блокування / розблокування дій під час передачі ---
 
