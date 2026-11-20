@@ -1107,6 +1107,7 @@ class ADBFileBrowserApp:
         self.transfer_process = None
         self.abort_transfer = False
         self.is_busy = False
+        self.is_ejected = False
 
         self.skip_duplicates_var = tk.BooleanVar(value=True)
         self.auto_delete_var = tk.BooleanVar(value=False)
@@ -1173,6 +1174,17 @@ class ADBFileBrowserApp:
             padx=8
         )
         self.btn_wifi.pack(side="right", padx=4, pady=4)
+
+        self.btn_safe_eject = tk.Button(
+            self.header_frame,
+            text="⏏️ Безпечне від'єднання",
+            command=self.safe_eject_device,
+            font=("Arial", 8, "bold"),
+            bg="#FFEBEE",
+            fg="#C62828",
+            padx=8
+        )
+        # Спочатку схована, з'являється при активному з'єднанні (USB або Wi-Fi)
 
         self.btn_disconnect_wifi = tk.Button(
             self.header_frame,
@@ -1363,6 +1375,7 @@ class ADBFileBrowserApp:
             return -1, "", str(e)
 
     def manual_device_check(self):
+        self.is_ejected = False
         threading.Thread(target=self._check_device_state, daemon=True).start()
 
     def adb_monitor_loop(self):
@@ -1385,12 +1398,17 @@ class ADBFileBrowserApp:
                 connected_devices.append((parts[0], parts[1]))
 
         if not connected_devices:
+            self.is_ejected = False
             was_connected = self.current_device_id is not None
             self.current_device_id = None
             self.device_model = ""
             self.safe_after(0, self.update_device_ui, "disconnected", "🔴 Смартфон не підключено (увімкніть USB-налагодження)")
             if was_connected:
                 self.safe_after(0, self._on_phone_disconnected)
+            return
+
+        if self.is_ejected:
+            # Пристрій було безпечно від'єднано користувачем
             return
 
         active = [d for d in connected_devices if d[1] == "device"]
@@ -1439,6 +1457,7 @@ class ADBFileBrowserApp:
             "disconnected": ("#B71C1C", "#FFEBEE", "🔴"),
             "unauthorized": ("#E65100", "#FFF3E0", "🟡"),
             "error": ("#B71C1C", "#FFCDD2", "⚠️"),
+            "ejecting": ("#E65100", "#FFF3E0", "⏳"),
             "other": ("#37474F", "#ECEFF1", "⚪")
         }
         fg, bg, icon = colors.get(state, ("#37474F", "#ECEFF1", "⚪"))
@@ -1448,24 +1467,107 @@ class ADBFileBrowserApp:
 
         if state == "connected_wifi":
             self.btn_wifi.config(text="📶 Меню Wi-Fi", bg="#BBDEFB", fg="#0D47A1")
-            if not self.btn_disconnect_wifi.winfo_ismapped():
-                self.btn_disconnect_wifi.pack(side="right", padx=4, pady=4, before=self.btn_wifi)
+            self.btn_safe_eject.config(
+                text="⏏️ Від'єднати (Wi-Fi)",
+                state="normal",
+                bg="#FFEBEE",
+                fg="#C62828"
+            )
+            try:
+                self.btn_safe_eject.pack_info()
+            except Exception:
+                self.btn_safe_eject.pack(side="right", padx=4, pady=4, before=self.btn_wifi)
+            self.btn_disconnect_wifi.pack_forget()
+
         elif state == "connected":
             self.btn_wifi.config(text="📶 Перемкнути на Wi-Fi", bg="#E8F5E9", fg="#1B5E20")
-            if self.btn_disconnect_wifi.winfo_ismapped():
-                self.btn_disconnect_wifi.pack_forget()
+            self.btn_safe_eject.config(
+                text="⏏️ Безпечне від'єднання (USB)",
+                state="normal",
+                bg="#FFEBEE",
+                fg="#C62828"
+            )
+            try:
+                self.btn_safe_eject.pack_info()
+            except Exception:
+                self.btn_safe_eject.pack(side="right", padx=4, pady=4, before=self.btn_wifi)
+            self.btn_disconnect_wifi.pack_forget()
+
+        elif state == "ejecting":
+            self.btn_safe_eject.config(state="disabled")
+
         else:
             self.btn_wifi.config(text="📶 Wi-Fi підключення", bg="#F5F5F5", fg="#333333")
-            if self.btn_disconnect_wifi.winfo_ismapped():
-                self.btn_disconnect_wifi.pack_forget()
+            self.btn_safe_eject.pack_forget()
+            self.btn_disconnect_wifi.pack_forget()
 
     def open_wifi_dialog(self):
         WiFiManagerDialog(self.root, self)
 
+    def safe_eject_device(self):
+        """Безпечне від'єднання пристрою (скидання кешу sync + розрив з'єднання)"""
+        if self.is_busy:
+            messagebox.showerror(
+                "Передача файлів триває",
+                "Неможливо безпечно від'єднати смартфон: зараз виконується копіювання/переміщення файлів!\n\n"
+                "Зупиніть передачу або зачекайте її завершення."
+            )
+            return
+
+        if not self.current_device_id:
+            messagebox.showinfo("Пристрій не підключено", "Наразі немає активного підключення до смартфона.")
+            return
+
+        dev_id = self.current_device_id
+        is_wifi = ":" in dev_id
+        dev_name = self.device_model or dev_id
+        conn_text = "Wi-Fi" if is_wifi else "USB"
+
+        if not messagebox.askyesno(
+            "Безпечне від'єднання пристрою",
+            f"Безпечно від'єднати {dev_name} ({conn_text})?\n\n"
+            "• Усі операції запису будуть примусово скинуті на накопичувач (adb shell sync).\n"
+            "• Це гарантує цілісність даних перед вийманням кабелю або закриттям зв'язку."
+        ):
+            return
+
+        self.update_device_ui("ejecting", f"⏳ Безпечне від'єднання {dev_name}... Синхронізація (sync)")
+
+        def task():
+            # 1. Примусове скидання файлового кешу на накопичувач
+            self.execute_adb(["shell", "sync"])
+
+            # 2. Якщо Wi-Fi - розриваємо ADB-сесію
+            if is_wifi:
+                self.execute_adb(["disconnect", dev_id])
+
+            self.is_ejected = True
+            self.current_device_id = None
+            self.device_model = ""
+
+            def on_done():
+                self._on_phone_disconnected()
+                if is_wifi:
+                    self.update_device_ui("disconnected", f"⏏️ Бездротове з'єднання безпечно закрито ({dev_name})")
+                    messagebox.showinfo(
+                        "Безпечне від'єднання",
+                        f"✅ Кеш файлової системи збережено на накопичувач.\n\n"
+                        f"Бездротове з'єднання з {dev_name} розірвано."
+                    )
+                else:
+                    self.update_device_ui("disconnected", f"⏏️ Пристрій готовий до від'єднання: можна виймати USB-кабель ({dev_name})")
+                    messagebox.showinfo(
+                        "Безпечне від'єднання",
+                        f"✅ Всі операції запису завершено (sync виконано).\n\n"
+                        f"Тепер ви можете безпечно від'єднати USB-кабель від комп'ютера."
+                    )
+
+            self.safe_after(0, on_done)
+
+        threading.Thread(target=task, daemon=True).start()
+
     def disconnect_wifi(self):
-        if messagebox.askyesno("Відключення Wi-Fi", "Відключити активне бездротове з'єднання ADB?"):
-            self.execute_adb(["disconnect"])
-            self.manual_device_check()
+        self.safe_eject_device()
 
     def open_space_analyzer(self):
         if not self.current_device_id:
