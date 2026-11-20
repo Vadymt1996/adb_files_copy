@@ -330,25 +330,30 @@ class SpaceAnalyzerDialog(tk.Toplevel):
             ("🗑️ Ескізи (.thumbnails)", "thumbnails"),
             ("✈️ Медіа Telegram", "telegram"),
             ("💬 Медіа WhatsApp", "whatsapp"),
+            ("📸 Скріншоти", "screenshots"),
             ("📦 Файли APK", "apks"),
             ("📥 Завантаження (Download)", "downloads"),
             ("📂 Порожні папки", "empty_dirs")
         ]
 
         self.preset_buttons = {}
-        row_frame = tk.Frame(preset_bar)
-        row_frame.pack(fill="x", pady=2)
+        grid_frame = tk.Frame(preset_bar)
+        grid_frame.pack(fill="x", pady=2)
 
-        for text, key in presets:
+        cols_count = 4
+        for c in range(cols_count):
+            grid_frame.columnconfigure(c, weight=1)
+
+        for idx, (text, key) in enumerate(presets):
             btn = tk.Button(
-                row_frame,
+                grid_frame,
                 text=text,
                 command=lambda k=key: self.scan_preset(k),
                 font=("Arial", 9),
                 padx=8,
                 pady=4
             )
-            btn.pack(side="left", padx=3, expand=True, fill="x")
+            btn.grid(row=idx // cols_count, column=idx % cols_count, padx=3, pady=3, sticky="ew")
             self.preset_buttons[key] = btn
 
         # Інформаційний рядок підсумку пресету
@@ -699,6 +704,32 @@ class SpaceAnalyzerDialog(tk.Toplevel):
                                     "size": sz,
                                     "size_str": format_size(sz),
                                     "type": "WhatsApp медіа",
+                                    "path": path
+                                })
+                            except ValueError:
+                                pass
+
+            elif preset_key == "screenshots":
+                summary_text = "Скріншоти екрана"
+                ss_paths = [
+                    "/sdcard/Pictures/Screenshots",
+                    "/sdcard/DCIM/Screenshots",
+                    "/sdcard/Screenshots"
+                ]
+                cmd = f"find {' '.join(ss_paths)} -type f -exec stat -c '%s %n' {{}} + 2>/dev/null"
+                ret, out, err = execute_adb_command(["shell", cmd], self.device_id, timeout=40)
+                if out:
+                    for line in out.strip().split("\n"):
+                        p = line.strip().split(" ", 1)
+                        if len(p) == 2:
+                            try:
+                                sz = int(p[0])
+                                path = p[1].strip()
+                                items.append({
+                                    "name": f"📸 {os.path.basename(path)}",
+                                    "size": sz,
+                                    "size_str": format_size(sz),
+                                    "type": "Скріншот",
                                     "path": path
                                 })
                             except ValueError:
