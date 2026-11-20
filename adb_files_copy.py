@@ -13,6 +13,8 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import ctypes
 from ctypes import wintypes
 
+from wifi_manager import WiFiManagerDialog, execute_adb_command
+
 # Win32 Drag & Drop API константи та функції
 WM_DROPFILES = 0x0233
 GWLP_WNDPROC = -4
@@ -1147,7 +1149,28 @@ class ADBFileBrowserApp:
             command=self.manual_device_check,
             font=("Arial", 8),
             padx=8
-        ).pack(side="right", padx=8, pady=4)
+        ).pack(side="right", padx=(4, 8), pady=4)
+
+        self.btn_wifi = tk.Button(
+            self.header_frame,
+            text="📶 Wi-Fi підключення",
+            command=self.open_wifi_dialog,
+            font=("Arial", 8, "bold"),
+            bg="#E8F5E9",
+            fg="#1B5E20",
+            padx=8
+        )
+        self.btn_wifi.pack(side="right", padx=4, pady=4)
+
+        self.btn_disconnect_wifi = tk.Button(
+            self.header_frame,
+            text="🔌 Відключити Wi-Fi",
+            command=self.disconnect_wifi,
+            font=("Arial", 8),
+            fg="#C62828",
+            padx=6
+        )
+        # Спочатку схована, з'являється при активному Wi-Fi з'єднанні
 
         tk.Button(
             self.header_frame,
@@ -1361,16 +1384,20 @@ class ADBFileBrowserApp:
 
         if active:
             dev_id = active[0][0]
+            is_wifi = ":" in dev_id
+            state_key = "connected_wifi" if is_wifi else "connected"
             if dev_id != self.current_device_id:
                 self.current_device_id = dev_id
                 _, model_out, _ = self.execute_adb(["shell", "getprop", "ro.product.model"])
                 _, brand_out, _ = self.execute_adb(["shell", "getprop", "ro.product.brand"])
                 model_name = f"{brand_out.strip()} {model_out.strip()}".strip() or dev_id
                 self.device_model = model_name
-                self.safe_after(0, self.update_device_ui, "connected", f"🟢 Підключено: {model_name} (ID: {dev_id})")
+                prefix = "📶 Wi-Fi підключено" if is_wifi else "🟢 Підключено"
+                self.safe_after(0, self.update_device_ui, state_key, f"{prefix}: {model_name} (ID: {dev_id})")
                 self.safe_after(0, self._on_phone_connected)
             else:
-                self.safe_after(0, self.update_device_ui, "connected", f"🟢 Підключено: {self.device_model} (ID: {dev_id})")
+                prefix = "📶 Wi-Fi підключено" if is_wifi else "🟢 Підключено"
+                self.safe_after(0, self.update_device_ui, state_key, f"{prefix}: {self.device_model} (ID: {dev_id})")
         elif unauthorized:
             dev_id = unauthorized[0][0]
             self.current_device_id = None
@@ -1394,6 +1421,7 @@ class ADBFileBrowserApp:
     def update_device_ui(self, state, text):
         colors = {
             "connected": ("#1B5E20", "#E8F5E9", "🟢"),
+            "connected_wifi": ("#0D47A1", "#E3F2FD", "📶"),
             "disconnected": ("#B71C1C", "#FFEBEE", "🔴"),
             "unauthorized": ("#E65100", "#FFF3E0", "🟡"),
             "error": ("#B71C1C", "#FFCDD2", "⚠️"),
@@ -1403,6 +1431,27 @@ class ADBFileBrowserApp:
         self.header_frame.config(bg=bg)
         self.status_icon.config(text=icon, bg=bg)
         self.status_label.config(text=text, fg=fg, bg=bg)
+
+        if state == "connected_wifi":
+            self.btn_wifi.config(text="📶 Меню Wi-Fi", bg="#BBDEFB", fg="#0D47A1")
+            if not self.btn_disconnect_wifi.winfo_ismapped():
+                self.btn_disconnect_wifi.pack(side="right", padx=4, pady=4, before=self.btn_wifi)
+        elif state == "connected":
+            self.btn_wifi.config(text="📶 Перемкнути на Wi-Fi", bg="#E8F5E9", fg="#1B5E20")
+            if self.btn_disconnect_wifi.winfo_ismapped():
+                self.btn_disconnect_wifi.pack_forget()
+        else:
+            self.btn_wifi.config(text="📶 Wi-Fi підключення", bg="#F5F5F5", fg="#333333")
+            if self.btn_disconnect_wifi.winfo_ismapped():
+                self.btn_disconnect_wifi.pack_forget()
+
+    def open_wifi_dialog(self):
+        WiFiManagerDialog(self.root, self)
+
+    def disconnect_wifi(self):
+        if messagebox.askyesno("Відключення Wi-Fi", "Відключити активне бездротове з'єднання ADB?"):
+            self.execute_adb(["disconnect"])
+            self.manual_device_check()
 
     # --- Блокування / розблокування дій під час передачі ---
 

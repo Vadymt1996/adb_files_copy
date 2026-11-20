@@ -15,3 +15,6 @@ env/
 # IDE / Editor files
 .vscode/
 .idea/
+
+# Local configs
+wifi_history.json
